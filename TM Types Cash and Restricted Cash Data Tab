@@ -1,0 +1,258 @@
+  Sub Pivot_TM_Type()
+    Dim ws As Worksheet
+    Dim lastRow As Long, lastCol As Long
+    Dim i As Long, j As Long
+    Dim netAmountCol As Range
+    Dim textJoinCol As Range
+    Dim entryTypeCol As Range, refCol As Range, notesCol As Range, batchDescCol As Range
+    Dim journalEntryCol As Range
+    Dim sheet1Name As String, sheet2Name As String
+    Dim uniqueTypes As Collection
+    Dim typeDict As Object
+    Dim subtotalRow As Long
+    Dim pivotTable1 As PivotTable, pivotTable2 As PivotTable, pivotTable3 As PivotTable
+    Dim pivotCache As pivotCache
+    Dim pivotRange As Range
+    Dim pi As PivotItem
+    Dim uniqueTypeRow As Long
+    Dim uniqueTypeDict As Object
+
+    ' Set the worksheet names dynamically
+    sheet1Name = ThisWorkbook.Sheets(1).Name
+    sheet2Name = ThisWorkbook.Sheets(2).Name
+
+    ' Set the worksheet
+    Set ws = ThisWorkbook.Sheets(sheet1Name)
+
+    ' Find the last row and column with data
+    lastRow = ws.Cells(ws.Rows.Count, "A").End(xlUp).Row
+    lastCol = ws.Cells(4, ws.Columns.Count).End(xlToLeft).Column
+
+    ' Add two new columns between columns S and T
+    ws.Columns("T:T").Insert Shift:=xlToRight, CopyOrigin:=xlFormatFromLeftOrAbove
+    ws.Columns("T:T").Insert Shift:=xlToRight, CopyOrigin:=xlFormatFromLeftOrAbove
+
+    ' Enter column headings
+    ws.Cells(4, 20).Value = "Type" ' Column T is the 20th column
+    ws.Cells(4, 21).Value = "TEXTJOIN GL Data" ' Column U is the 21st column
+
+    ' Format column headings
+    With ws.Range("T4:U4").Interior
+        .Color = RGB(204, 204, 255) ' Light purple
+    End With
+
+    ' Locate the columns for "Entry Type", "Reference", "Notes", "Batch Description", and "Journal Entry" in row 4
+Set entryTypeCol = ws.Rows(4).Find(What:="Entry Type", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)   
+Set refCol = ws.Rows(4).Find(What:="Reference", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set notesCol = ws.Rows(4).Find(What:="Notes", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set batchDescCol = ws.Rows(4).Find(What:="Batch Description", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set journalEntryCol = ws.Rows(4).Find(What:="Journal Entry", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+
+    If entryTypeCol Is Nothing Or refCol Is Nothing Or notesCol Is Nothing Or batchDescCol Is Nothing Or journalEntryCol Is Nothing Then
+        MsgBox "One or more required columns (' Entry Type ', 'Reference', 'Notes', 'Batch Description', 'Journal Entry') not found."
+        Exit Sub
+    End If
+
+    ' Set the TEXTJOIN Data column reference
+    Set textJoinCol = ws.Cells(4, 21) ' Column U is the 21st column
+
+' Join data from "Entry Type", "Reference", "Notes", and "Batch Description"
+For i = 5 To lastRow
+    ws.Cells(i, textJoinCol.Column).Value = Join(Array(ws.Cells(i, entryTypeCol.Column).Value, ws.Cells(i, refCol.Column).Value, ws.Cells(i, notesCol.Column).Value, ws.Cells(i, batchDescCol.Column).Value), " ")
+Next i
+
+    ' Add the exact formula in cell T5 and copy it down to the last row
+    ws.Cells(5, 20).Formula2 = "=IF(ISNUMBER(SEARCH(""Rollup"", 'GL Data'!U5)), ""EXCLUDE"", " & _
+       "IF(AND(LEFT('GL Data'!O5, 1) = ""K"", ISERROR(SEARCH(""IntercoPaidInv"", 'GL Data'!U5))), ""K-entries (Nets to Zero with Others)"", " & _
+       "IF(ISNUMBER(SEARCH(""Commit Pay Adjustments"", 'GL Data'!U5)), ""Commit Pay Adjustments (Nets to Zero with Others)"", " & _
+       "IF(AND(ISNUMBER(SEARCH(""Commit Pay"", 'GL Data'!U5)), ISERROR(SEARCH(""Commit Pay Adjustments"", 'GL Data'!U5))), ""Commit Pay"", " & _
+       "IF(ISNUMBER(SEARCH(""Management Fees to Borrower"", 'GL Data'!U5)), ""Waterfall Management Fees to Borrower"", " & _
+       "IF(AND(ISNUMBER(SEARCH(""AM Fee"", 'GL Data'!U5)), ISERROR(SEARCH(""Intercompany Settlement"", 'GL Data'!U5))), ""AM Fee Settlement"", " & _
+       "IFERROR(INDEX('TM Type Map'!A:A, MATCH(TRUE, ISNUMBER(SEARCH('TM Type Map'!C$1:INDEX('TM Type Map'!C:C, COUNTA('TM Type Map'!C:C)), 'GL Data'!U5)), 0)), ""Miscellaneous"")))))))"
+    ws.Range("T5:T" & lastRow).FillDown
+
+    ' Skip 5 rows after the last filled row
+    subtotalRow = lastRow + 6
+
+    ' Define the range for the pivot table
+    Set pivotRange = ws.Range("A4:U" & lastRow)
+
+    ' Create the pivot cache
+    Set pivotCache = ThisWorkbook.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=pivotRange.Address(True, True, xlR1C1, True))
+
+    ' Add headings above the pivot tables
+    ws.Cells(subtotalRow - 1, 1).Value = "All GL Data by Type"
+    ws.Cells(subtotalRow - 1, 4).Value = "Cash In"
+    ws.Cells(subtotalRow - 1, 7).Value = "Cash Out"
+    ws.Cells(subtotalRow - 1, 1).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(subtotalRow - 1, 4).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(subtotalRow - 1, 7).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(subtotalRow - 1, 1).Font.Bold = True
+    ws.Cells(subtotalRow - 1, 4).Font.Bold = True
+    ws.Cells(subtotalRow - 1, 7).Font.Bold = True
+
+    ' Create the first pivot table
+    Set pivotTable1 = ws.PivotTables.Add(pivotCache:=pivotCache, TableDestination:=ws.Cells(subtotalRow, 1))
+
+    ' Set up the first pivot table
+    With pivotTable1
+        ' Add fields to the pivot table
+        .PivotFields("Type").Orientation = xlRowField
+        .AddDataField .PivotFields("Net Amount"), "Sum of Net Amount", xlSum
+        .PivotFields("Sum of Net Amount").NumberFormat = "_($* #,##0.00_);_($* (#,##0.00);_($* ""-""??_);_(@_)"
+
+        ' Filter out "EXCLUDE" items
+        With .PivotFields("Type")
+            .ClearAllFilters
+            .PivotItems("EXCLUDE").Visible = False
+        End With
+    End With
+
+    ' Create the second pivot table for amounts greater than 0
+    Set pivotCache = ThisWorkbook.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=pivotRange.Address(True, True, xlR1C1, True))
+    Set pivotTable2 = ws.PivotTables.Add(pivotCache:=pivotCache, TableDestination:=ws.Cells(subtotalRow, 4))
+
+    ' Set up the second pivot table
+    With pivotTable2
+        .PivotFields("Type").Orientation = xlRowField
+        .AddDataField .PivotFields("Net Amount"), "Sum of Net Amount", xlSum
+        .PivotFields("Sum of Net Amount").NumberFormat = "_($* #,##0.00_);_($* (#,##0.00);_($* ""-""??_);_(@_)"
+        ' Filter for positive amounts and exclude specific entries
+        For Each pi In .PivotFields("Type").PivotItems
+            If pi.DataRange.Cells(1, 1).Value <= 0 Or _
+               pi.Name = "Commit Pay Adjustments (Nets to Zero with Others)" Or _
+               pi.Name = "IntercoPaidInv (Nets to Zero with Others)" Or _
+               pi.Name = "K-entries (Nets to Zero with Others)" Then
+                pi.Visible = False
+            End If
+        Next pi
+        ' Sort in descending order
+        .PivotFields("Type").AutoSort xlDescending, "Sum of Net Amount"
+    End With
+
+    ' Create the third pivot table for amounts less than 0
+    Set pivotCache = ThisWorkbook.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=pivotRange.Address(True, True, xlR1C1, True))
+    Set pivotTable3 = ws.PivotTables.Add(pivotCache:=pivotCache, TableDestination:=ws.Cells(subtotalRow, 7))
+
+    ' Set up the third pivot table
+    With pivotTable3
+        .PivotFields("Type").Orientation = xlRowField
+        .AddDataField .PivotFields("Net Amount"), "Sum of Net Amount", xlSum
+        .PivotFields("Sum of Net Amount").NumberFormat = "_($* #,##0.00_);_($* (#,##0.00);_($* ""-""??_);_(@_)"
+        ' Filter for negative amounts and exclude specific entries
+        For Each pi In .PivotFields("Type").PivotItems
+            If pi.DataRange.Cells(1, 1).Value >= 0 Or _
+               pi.Name = "Commit Pay Adjustments (Nets to Zero with Others)" Or _
+               pi.Name = "IntercoPaidInv (Nets to Zero with Others)" Or _
+               pi.Name = "K-entries (Nets to Zero with Others)" Then
+                pi.Visible = False
+            End If
+        Next pi
+        ' Sort in ascending order
+        .PivotFields("Type").AutoSort xlAscending, "Sum of Net Amount"
+    End With
+
+    ' Highlight specific rows and columns in light gray
+    For i = 5 To lastRow
+        If ws.Cells(i, 20).Value = "Commit Pay Adjustments (Nets to Zero with Others)" Or _
+           ws.Cells(i, 20).Value = "IntercoPaidInv (Nets to Zero with Others)" Or _
+           ws.Cells(i, 20).Value = "K-entries (Nets to Zero with Others)" Then
+            ws.Rows(i).Interior.Color = RGB(217, 217, 217) ' Light gray
+        End If
+    Next i
+
+    ' Highlight specific entries in pivot tables
+    For Each pt In ws.PivotTables
+        For Each pi In pt.PivotFields("Type").PivotItems
+            If pi.Name = "Commit Pay Adjustments (Nets to Zero with Others)" Or _
+               pi.Name = "IntercoPaidInv (Nets to Zero with Others)" Or _
+               pi.Name = "K-entries (Nets to Zero with Others)" Then
+                ' Highlight the label range
+                For Each cell In pt.RowRange
+                    If cell.Value = pi.Name Then
+                        cell.Interior.Color = RGB(217, 217, 217) ' Light gray
+                    End If
+                Next cell
+                ' Highlight the data range
+                For Each cell In pt.DataBodyRange
+                    If cell.Value = pi.Name Then
+                        cell.Interior.Color = RGB(217, 217, 217) ' Light gray
+                    End If
+                Next cell
+            End If
+        Next pi
+    Next pt
+
+    ' Skip 5 rows after the first pivot table
+    uniqueTypeRow = subtotalRow + pivotTable1.TableRange2.Rows.Count + 6
+
+    ' Initialize the dictionary to store unique types
+    Set uniqueTypeDict = CreateObject("Scripting.Dictionary")
+
+    ' Collect unique types from the "Type" column
+    For i = 5 To lastRow
+        If Not uniqueTypeDict.exists(ws.Cells(i, 20).Value) And ws.Cells(i, 20).Value <> "EXCLUDE" Then
+            uniqueTypeDict.Add ws.Cells(i, 20).Value, Nothing
+        End If
+    Next i
+
+    ' List all unique values in the "Type" column starting from column A
+    ws.Cells(uniqueTypeRow, 1).Value = "All GL Data by Type (List)"
+    ws.Cells(uniqueTypeRow, 1).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 1).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(uniqueTypeRow, 4).Value = "Cash In (List)"
+    ws.Cells(uniqueTypeRow, 4).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 4).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(uniqueTypeRow, 7).Value = "Cash Out (List)"
+    ws.Cells(uniqueTypeRow, 7).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 7).Interior.Color = RGB(204, 204, 255) ' Light purple
+    uniqueTypeRow = uniqueTypeRow + 1
+
+    For Each Key In uniqueTypeDict.keys
+        ws.Cells(uniqueTypeRow, 1).Value = Key
+        If Key = "Commit Pay Adjustments (Nets to Zero with Others)" Or _
+           Key = "IntercoPaidInv (Nets to Zero with Others)" Or _
+           Key = "K-entries (Nets to Zero with Others)" Then
+            ws.Cells(uniqueTypeRow, 1).Interior.Color = RGB(217, 217, 217) ' Light gray
+        End If
+        If Key <> "Commit Pay Adjustments (Nets to Zero with Others)" And _
+           Key <> "IntercoPaidInv (Nets to Zero with Others)" And _
+           Key <> "K-entries (Nets to Zero with Others)" Then
+            If ws.Cells(uniqueTypeRow, 4).Value = "" Then
+                ws.Cells(uniqueTypeRow, 4).Value = Key
+            End If
+            If ws.Cells(uniqueTypeRow, 7).Value = "" Then
+                ws.Cells(uniqueTypeRow, 7).Value = Key
+            End If
+        End If
+        uniqueTypeRow = uniqueTypeRow + 1
+    Next Key
+
+    ' Add subtotals for all three unique lists by Type and subtotal Net Amount
+    ws.Cells(uniqueTypeRow, 1).Value = "Grand Total"
+    ws.Cells(uniqueTypeRow, 1).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 1).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(uniqueTypeRow, 2).Formula = "=SUMIF(A5:A" & uniqueTypeRow - 1 & ", ""<>EXCLUDE"", B5:B" & uniqueTypeRow - 1 & ")"
+    ws.Cells(uniqueTypeRow, 4).Value = "Grand Total"
+    ws.Cells(uniqueTypeRow, 4).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 4).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(uniqueTypeRow, 5).Formula = "=SUMIF(D5:D" & uniqueTypeRow - 1 & ", ""<>EXCLUDE"", E5:E" & uniqueTypeRow - 1 & ")"
+    ws.Cells(uniqueTypeRow, 7).Value = "Grand Total"
+    ws.Cells(uniqueTypeRow, 7).Font.Bold = True
+    ws.Cells(uniqueTypeRow, 7).Interior.Color = RGB(204, 204, 255) ' Light purple
+    ws.Cells(uniqueTypeRow, 8).Formula = "=SUMIF(G5:G" & uniqueTypeRow - 1 & ", ""<>EXCLUDE"", H5:H" & uniqueTypeRow - 1 & ")"
+
+    ' Add comment based on Grand Total Sum of Net Amount in pivot 1
+    Dim grandTotal As Double
+    On Error Resume Next
+    grandTotal = pivotTable1.GetPivotData("Sum of Net Amount").Value
+    On Error GoTo 0
+
+    If grandTotal > 0 Then
+        ws.Cells(pivotTable1.TableRange2.Rows.Count + subtotalRow - 1, pivotTable1.TableRange2.Columns.Count + 1).Value = "M^M Increase"
+    Else
+        ws.Cells(pivotTable1.TableRange2.Rows.Count + subtotalRow - 1, pivotTable1.TableRange2.Columns.Count + 1).Value = "M^M Decrease"
+    End If
+
+    MsgBox "Columns, formulas, and pivot tables added successfully."
+End Sub
